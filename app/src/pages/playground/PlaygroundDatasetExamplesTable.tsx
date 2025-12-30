@@ -47,6 +47,7 @@ import {
 import { AlphabeticIndexIcon } from "@phoenix/components/AlphabeticIndexIcon";
 import { JSONText } from "@phoenix/components/code/JSONText";
 import { ExperimentRunCellAnnotationsList } from "@phoenix/components/experiment";
+import { ExperimentProgressIndicator } from "./ExperimentProgressIndicator";
 import {
   CellTop,
   JSONCell,
@@ -510,6 +511,9 @@ export function PlaygroundDatasetExamplesTable({
   const templateFormat = usePlaygroundContext((state) => state.templateFormat);
 
   const updateInstance = usePlaygroundContext((state) => state.updateInstance);
+  const updateExperimentRunProgress = usePlaygroundContext(
+    (state) => state.updateExperimentRunProgress
+  );
   const updateExampleData = usePlaygroundDatasetExamplesTableContext(
     (state) => state.updateExampleData
   );
@@ -588,6 +592,16 @@ export function PlaygroundDatasetExamplesTable({
               patch: { errorMessage: chatCompletion.message },
             });
             break;
+          case "ChatCompletionSubscriptionProgress":
+            updateExperimentRunProgress({
+              instanceId,
+              progress: {
+                total: chatCompletion.total,
+                completed: chatCompletion.completed,
+                failed: chatCompletion.failed,
+              },
+            });
+            break;
           case "TextChunk":
             if (chatCompletion.datasetExampleId == null) {
               return;
@@ -641,6 +655,7 @@ export function PlaygroundDatasetExamplesTable({
       appendExampleDataEvaluationChunk,
       updateExampleData,
       updateInstance,
+      updateExperimentRunProgress,
     ]
   );
 
@@ -972,13 +987,26 @@ export function PlaygroundDatasetExamplesTable({
         instance: enrichedInstance,
         templateFormat,
       });
+      // Check if running experiment with progress tracking
+      const isShowingProgress =
+        instance.activeRunId !== null && instance.experimentRunProgress;
+
       return {
         id: `instance-${instance.id}`,
         header: () => (
-          <Flex direction="row" gap="size-100" alignItems="center">
-            <AlphabeticIndexIcon index={index} size="XS" />
-            <span>Output</span>
-          </Flex>
+          <View>
+            <Flex direction="row" gap="size-100" alignItems="center">
+              <AlphabeticIndexIcon index={index} size="XS" />
+              <span>Output</span>
+            </Flex>
+            {isShowingProgress && (
+              <ExperimentProgressIndicator
+                total={instance.experimentRunProgress.total}
+                completed={instance.experimentRunProgress.completed}
+                failed={instance.experimentRunProgress.failed}
+              />
+            )}
+          </View>
         ),
 
         cell: ({ row }) => {
@@ -1320,6 +1348,11 @@ graphql`
         datasetExampleId
         repetitionNumber
         message
+      }
+      ... on ChatCompletionSubscriptionProgress {
+        total
+        completed
+        failed
       }
       ... on EvaluationChunk {
         datasetExampleId

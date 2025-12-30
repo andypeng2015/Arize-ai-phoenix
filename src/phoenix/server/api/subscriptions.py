@@ -10,6 +10,7 @@ from typing import (
     Callable,
     Coroutine,
     Iterable,
+    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -66,6 +67,7 @@ from phoenix.server.api.types.ChatCompletionSubscriptionPayload import (
     ChatCompletionSubscriptionError,
     ChatCompletionSubscriptionExperiment,
     ChatCompletionSubscriptionPayload,
+    ChatCompletionSubscriptionProgress,
     ChatCompletionSubscriptionResult,
     EvaluationChunk,
 )
@@ -535,6 +537,12 @@ class Subscription:
         write_batch_size = 10
         write_interval = timedelta(seconds=10)
         last_write_time = datetime.now()
+        # Progress tracking
+        total_tasks = len(revisions) * input.repetitions
+        completed_tasks = 0
+        failed_tasks = 0
+        last_progress_emit_time = datetime.now()
+        progress_emit_interval = timedelta(seconds=1)
         while not_started or in_progress:
             while not_started and len(in_progress) < max_in_progress:
                 ex_id, stream = not_started.pop()
@@ -547,26 +555,43 @@ class Subscription:
             for completed_task in completed_tasks:
                 idx = [task for _, _, task in in_progress].index(completed_task)
                 example_id, stream, _ = in_progress[idx]
+                task_status: Optional[Literal["completed", "failed"]] = None
                 try:
                     yield completed_task.result()
                 except StopAsyncIteration:
                     del in_progress[idx]  # removes exhausted stream
+                    if example_id is not None:
+                        completed_tasks += 1
+                        task_status = "completed"
                 except asyncio.TimeoutError:
                     del in_progress[idx]  # removes timed-out stream
                     if example_id is not None:
                         yield ChatCompletionSubscriptionError(
                             message="Playground task timed out", dataset_example_id=example_id
                         )
+                        failed_tasks += 1
+                        task_status = "failed"
                 except Exception as error:
                     del in_progress[idx]  # removes failed stream
                     if example_id is not None:
                         yield ChatCompletionSubscriptionError(
                             message="An unexpected error occurred", dataset_example_id=example_id
                         )
+                        failed_tasks += 1
+                        task_status = "failed"
                     logger.exception(error)
                 else:
                     task = _create_task_with_timeout(stream)
                     in_progress[idx] = (example_id, stream, task)
+
+                # Emit progress update if enough time has passed and a task completed/failed
+                if task_status is not None and datetime.now() - last_progress_emit_time > progress_emit_interval:
+                    yield ChatCompletionSubscriptionProgress(
+                        total=total_tasks,
+                        completed=completed_tasks,
+                        failed=failed_tasks,
+                    )
+                    last_progress_emit_time = datetime.now()
 
                 exceeded_write_batch_size = results.qsize() >= write_batch_size
                 exceeded_write_interval = datetime.now() - last_write_time > write_interval
@@ -593,6 +618,13 @@ class Subscription:
                 span_cost_calculator=info.context.span_cost_calculator,
             ):
                 yield result_payload
+
+        # Emit final progress update
+        yield ChatCompletionSubscriptionProgress(
+            total=total_tasks,
+            completed=completed_tasks,
+            failed=failed_tasks,
+        )
 
         if input.evaluators:
             async with info.context.db() as session:
