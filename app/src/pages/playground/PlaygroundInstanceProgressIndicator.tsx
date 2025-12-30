@@ -17,8 +17,8 @@ export const PlaygroundInstanceProgressIndicator = memo(
     instanceId,
   }: PlaygroundInstanceProgressIndicatorProps) {
     // Only subscribe to the specific instance's state
-    const instance = usePlaygroundContext(
-      (state) => state.instances.find((i) => i.id === instanceId)
+    const instance = usePlaygroundContext((state) =>
+      state.instances.find((i) => i.id === instanceId)
     );
 
     // Don't render if there's no instance or no active run
