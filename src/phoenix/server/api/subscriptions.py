@@ -591,7 +591,10 @@ class Subscription:
                     in_progress[idx] = (example_id, stream, task)
 
                 # Emit progress update if enough time has passed and a task completed/failed
-                if task_status is not None and datetime.now() - last_progress_emit_time > progress_emit_interval:
+                if (
+                    task_status is not None
+                    and datetime.now() - last_progress_emit_time > progress_emit_interval
+                ):
                     yield ChatCompletionSubscriptionProgress(
                         total=total_tasks,
                         completed=completed_task_count,
