@@ -17,6 +17,7 @@ from phoenix.db import models
 from phoenix.server.api.types.ChatCompletionSubscriptionPayload import (
     ChatCompletionSubscriptionError,
     ChatCompletionSubscriptionExperiment,
+    ChatCompletionSubscriptionProgress,
     ChatCompletionSubscriptionResult,
     EvaluationChunk,
     TextChunk,
@@ -1048,6 +1049,11 @@ class TestChatCompletionOverDatasetSubscription:
               annotatorKind
             }
           }
+          ... on ChatCompletionSubscriptionProgress {
+            total
+            completed
+            failed
+          }
         }
       }
 
@@ -2020,6 +2026,86 @@ class TestChatCompletionOverDatasetSubscription:
             result = await session.execute(select(models.ExperimentRunAnnotation))
             annotations = result.scalars().all()
             assert len(annotations) == 0
+
+    async def test_emits_progress_updates(
+        self,
+        gql_client: AsyncGraphQLClient,
+        openai_api_key: str,
+        playground_dataset_with_patch_revision: None,
+        custom_vcr: CustomVCR,
+        db: DbSessionFactory,
+    ) -> None:
+        """Test that progress updates are emitted during experiment execution."""
+        dataset_id = str(GlobalID(type_name=Dataset.__name__, node_id=str(1)))
+        version_id = str(GlobalID(type_name=DatasetVersion.__name__, node_id=str(1)))
+        variables = {
+            "input": {
+                "model": {"builtin": {"providerKey": "OPENAI", "name": "gpt-4"}},
+                "datasetId": dataset_id,
+                "datasetVersionId": version_id,
+                "messages": [
+                    {
+                        "role": "USER",
+                        "content": "What country is {city} in? Answer in one word, no punctuation.",
+                    }
+                ],
+                "templateFormat": "F_STRING",
+                "repetitions": 2,  # Use 2 repetitions to get more progress updates
+            }
+        }
+
+        progress_updates: list[Any] = []
+        experiment_payload = None
+
+        async with gql_client.subscription(
+            query=self.QUERY,
+            variables=variables,
+            operation_name="ChatCompletionOverDatasetSubscription",
+        ) as subscription:
+            custom_vcr.register_matcher(
+                _request_bodies_contain_same_city.__name__, _request_bodies_contain_same_city
+            )
+            with custom_vcr.use_cassette(match_on=[_request_bodies_contain_same_city.__name__]):
+                async for payload in subscription.stream():
+                    typename = payload["chatCompletionOverDataset"]["__typename"]
+                    if typename == ChatCompletionSubscriptionProgress.__name__:
+                        progress_updates.append(payload["chatCompletionOverDataset"])
+                    elif typename == ChatCompletionSubscriptionExperiment.__name__:
+                        experiment_payload = payload["chatCompletionOverDataset"]
+
+        # Verify we received progress updates
+        assert len(progress_updates) > 0, "Expected at least one progress update"
+
+        # Verify progress structure
+        first_progress = progress_updates[0]
+        assert "total" in first_progress
+        assert "completed" in first_progress
+        assert "failed" in first_progress
+
+        # Total should be examples × repetitions = 3 examples × 2 repetitions = 6 tasks
+        assert first_progress["total"] == 6
+
+        # Verify final progress update
+        final_progress = progress_updates[-1]
+        # All tasks should be completed or failed
+        assert final_progress["completed"] + final_progress["failed"] == final_progress["total"]
+
+        # With the test dataset (3 examples, 1 with error), we expect:
+        # - 2 successful examples × 2 repetitions = 4 completed
+        # - 1 failed example × 2 repetitions = 2 failed
+        assert final_progress["completed"] == 4
+        assert final_progress["failed"] == 2
+
+        # Verify progress is monotonically increasing
+        for i in range(1, len(progress_updates)):
+            prev = progress_updates[i - 1]
+            curr = progress_updates[i]
+            # Completed + failed should only increase
+            assert (curr["completed"] + curr["failed"]) >= (prev["completed"] + prev["failed"])
+
+        # Verify experiment was created
+        assert experiment_payload is not None
+        assert "experiment" in experiment_payload
 
 
 def _request_bodies_contain_same_city(request1: VCRRequest, request2: VCRRequest) -> None:

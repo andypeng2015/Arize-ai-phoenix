@@ -47,7 +47,6 @@ import {
 import { AlphabeticIndexIcon } from "@phoenix/components/AlphabeticIndexIcon";
 import { JSONText } from "@phoenix/components/code/JSONText";
 import { ExperimentRunCellAnnotationsList } from "@phoenix/components/experiment";
-import { ExperimentProgressIndicator } from "./ExperimentProgressIndicator";
 import {
   CellTop,
   JSONCell,
@@ -102,6 +101,7 @@ import {
   usePlaygroundDatasetExamplesTableContext,
 } from "./PlaygroundDatasetExamplesTableContext";
 import { PlaygroundErrorWrap } from "./PlaygroundErrorWrap";
+import { PlaygroundInstanceProgressIndicator } from "./PlaygroundInstanceProgressIndicator";
 import { PlaygroundRunTraceDetailsDialog } from "./PlaygroundRunTraceDialog";
 import {
   PartialOutputToolCall,
@@ -987,26 +987,21 @@ export function PlaygroundDatasetExamplesTable({
         instance: enrichedInstance,
         templateFormat,
       });
-      // Check if running experiment with progress tracking
-      const isShowingProgress =
-        instance.activeRunId !== null && instance.experimentRunProgress;
-
       return {
         id: `instance-${instance.id}`,
         header: () => (
-          <View>
-            <Flex direction="row" gap="size-100" alignItems="center">
+          <Flex
+            direction="row"
+            width="100%"
+            justifyContent="space-between"
+            alignItems="center"
+          >
+            <Flex direction="row" gap="size-100">
               <AlphabeticIndexIcon index={index} size="XS" />
               <span>Output</span>
             </Flex>
-            {isShowingProgress && (
-              <ExperimentProgressIndicator
-                total={instance.experimentRunProgress.total}
-                completed={instance.experimentRunProgress.completed}
-                failed={instance.experimentRunProgress.failed}
-              />
-            )}
-          </View>
+            <PlaygroundInstanceProgressIndicator instanceId={instance.id} />
+          </Flex>
         ),
 
         cell: ({ row }) => {

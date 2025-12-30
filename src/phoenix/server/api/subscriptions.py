@@ -539,10 +539,16 @@ class Subscription:
         last_write_time = datetime.now()
         # Progress tracking
         total_tasks = len(revisions) * input.repetitions
-        completed_tasks = 0
-        failed_tasks = 0
+        completed_task_count = 0
+        failed_task_count = 0
         last_progress_emit_time = datetime.now()
         progress_emit_interval = timedelta(seconds=1)
+        # Emit initial progress (0/total)
+        yield ChatCompletionSubscriptionProgress(
+            total=total_tasks,
+            completed=0,
+            failed=0,
+        )
         while not_started or in_progress:
             while not_started and len(in_progress) < max_in_progress:
                 ex_id, stream = not_started.pop()
@@ -561,7 +567,7 @@ class Subscription:
                 except StopAsyncIteration:
                     del in_progress[idx]  # removes exhausted stream
                     if example_id is not None:
-                        completed_tasks += 1
+                        completed_task_count += 1
                         task_status = "completed"
                 except asyncio.TimeoutError:
                     del in_progress[idx]  # removes timed-out stream
@@ -569,7 +575,7 @@ class Subscription:
                         yield ChatCompletionSubscriptionError(
                             message="Playground task timed out", dataset_example_id=example_id
                         )
-                        failed_tasks += 1
+                        failed_task_count += 1
                         task_status = "failed"
                 except Exception as error:
                     del in_progress[idx]  # removes failed stream
@@ -577,7 +583,7 @@ class Subscription:
                         yield ChatCompletionSubscriptionError(
                             message="An unexpected error occurred", dataset_example_id=example_id
                         )
-                        failed_tasks += 1
+                        failed_task_count += 1
                         task_status = "failed"
                     logger.exception(error)
                 else:
@@ -588,8 +594,8 @@ class Subscription:
                 if task_status is not None and datetime.now() - last_progress_emit_time > progress_emit_interval:
                     yield ChatCompletionSubscriptionProgress(
                         total=total_tasks,
-                        completed=completed_tasks,
-                        failed=failed_tasks,
+                        completed=completed_task_count,
+                        failed=failed_task_count,
                     )
                     last_progress_emit_time = datetime.now()
 
@@ -622,8 +628,8 @@ class Subscription:
         # Emit final progress update
         yield ChatCompletionSubscriptionProgress(
             total=total_tasks,
-            completed=completed_tasks,
-            failed=failed_tasks,
+            completed=completed_task_count,
+            failed=failed_task_count,
         )
 
         if input.evaluators:
